@@ -34,9 +34,12 @@ class AbletonRepository(
     }
 
     private suspend fun subscribeToAll(conn: OscConnection) = coroutineScope {
-        fetchInitialState(conn)
+        // Start collectors FIRST so they're ready when replies arrive
         launch { subscribeTransport(conn) }
         launch { subscribeTracks(conn) }
+        // Small delay to ensure collectors are active before sending queries
+        delay(100)
+        fetchInitialState(conn)
     }
 
     private suspend fun fetchInitialState(conn: OscConnection) {
