@@ -24,9 +24,16 @@ class ConnectionViewModel(
 
     val debugLog: StateFlow<List<String>> = connectionManager.debugLog
 
+    // Re-poll connection states every 500ms so the dots update promptly
     val connectionStates: StateFlow<Map<String, ConnectionState>> =
-        connectionManager.connections.map { conns ->
-            conns.mapValues { it.value.connectionState.value }
+        connectionManager.connections.flatMapLatest { conns ->
+            if (conns.isEmpty()) flowOf(emptyMap())
+            else {
+                val stateFlows = conns.map { (id, conn) ->
+                    conn.connectionState.map { state -> id to state }
+                }
+                combine(stateFlows) { pairs -> pairs.toMap() }
+            }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     private val _showAddDialog = MutableStateFlow(false)
