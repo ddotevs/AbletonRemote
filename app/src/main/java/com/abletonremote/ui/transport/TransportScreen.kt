@@ -25,10 +25,6 @@ fun TransportScreen(viewModel: TransportViewModel) {
     val state by viewModel.transportState.collectAsState()
     val cuePoints by viewModel.cuePoints.collectAsState()
 
-    // Local state for slider dragging (avoids jitter from live updates while dragging)
-    var isDraggingPosition by remember { mutableStateOf(false) }
-    var dragPosition by remember { mutableFloatStateOf(0f) }
-
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -71,37 +67,37 @@ fun TransportScreen(viewModel: TransportViewModel) {
                 colors = CardDefaults.cardColors(containerColor = AbletonSurface)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    val num = state.signatureNumerator
+                    val maxPos = if (state.songLength > 0f) state.songLength else 1000f
+                    val currentBar = (state.currentTime / num).toInt()
+                    val currentBeatInBar = (state.currentTime % num).toInt()
+                    val maxBars = (maxPos / num).toInt().coerceAtLeast(1)
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text("Position", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            formatBeatTime(
-                                if (isDraggingPosition) dragPosition else state.currentTime,
-                                state.signatureNumerator
-                            ),
+                            formatBeatTime(state.currentTime, num),
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 14.sp,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
                             color = AbletonAccent
                         )
                     }
                     Spacer(Modifier.height(4.dp))
 
-                    val maxPos = if (state.songLength > 0f) state.songLength else 1000f
-                    val steps = maxPos.toInt().coerceAtLeast(1)
+                    // Bar-level slider
+                    Text("Bar ${currentBar + 1}", fontSize = 11.sp, color = AbletonTextSecondary)
                     Slider(
-                        value = if (isDraggingPosition) dragPosition else kotlin.math.floor(state.currentTime),
+                        value = currentBar.toFloat(),
                         onValueChange = {
-                            isDraggingPosition = true
-                            dragPosition = kotlin.math.floor(it)
+                            val bar = it.toInt()
+                            viewModel.setSongPosition(bar * num.toFloat() + currentBeatInBar)
                         },
-                        onValueChangeFinished = {
-                            viewModel.setSongPosition(dragPosition)
-                            isDraggingPosition = false
-                        },
-                        valueRange = 0f..maxPos,
-                        steps = steps - 1,
+                        valueRange = 0f..maxBars.toFloat(),
+                        steps = maxBars - 1,
                         colors = SliderDefaults.colors(
                             thumbColor = AbletonAccent,
                             activeTrackColor = AbletonAccent,
@@ -109,28 +105,41 @@ fun TransportScreen(viewModel: TransportViewModel) {
                         )
                     )
 
-                    // Quick jump buttons
+                    // Beat fine-tune buttons
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
                         OutlinedButton(
                             onClick = { viewModel.setSongPosition(0f) },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                        ) { Text("Start", fontSize = 12.sp) }
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) { Text("|<", fontSize = 12.sp) }
                         OutlinedButton(
                             onClick = {
-                                val newPos = (state.currentTime - state.signatureNumerator).coerceAtLeast(0f)
+                                val newPos = (state.currentTime - num).coerceAtLeast(0f)
                                 viewModel.setSongPosition(newPos)
                             },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                        ) { Text("-1 Bar", fontSize = 12.sp) }
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) { Text("-Bar", fontSize = 12.sp) }
                         OutlinedButton(
                             onClick = {
-                                viewModel.setSongPosition(state.currentTime + state.signatureNumerator)
+                                val newPos = (state.currentTime - 1f).coerceAtLeast(0f)
+                                viewModel.setSongPosition(newPos)
                             },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                        ) { Text("+1 Bar", fontSize = 12.sp) }
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) { Text("-Beat", fontSize = 12.sp) }
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.setSongPosition(state.currentTime + 1f)
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) { Text("+Beat", fontSize = 12.sp) }
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.setSongPosition(state.currentTime + num)
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) { Text("+Bar", fontSize = 12.sp) }
                     }
                 }
             }
@@ -218,11 +227,17 @@ fun TransportScreen(viewModel: TransportViewModel) {
                     )
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
+                        val num = state.signatureNumerator
+                        val maxLoopRange = if (state.songLength > 0f) state.songLength else 1000f
+                        val maxBars = (maxLoopRange / num).toInt().coerceAtLeast(1)
+
                         Text("Loop Region", style = MaterialTheme.typography.titleSmall,
                             color = AbletonYellow)
                         Spacer(Modifier.height(8.dp))
 
-                        // Loop start
+                        // Loop start — bar slider + beat buttons
+                        val startBar = (state.loopStart / num).toInt()
+                        val startBeatInBar = (state.loopStart % num).toInt()
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -230,27 +245,52 @@ fun TransportScreen(viewModel: TransportViewModel) {
                         ) {
                             Text("Start", fontSize = 13.sp, color = AbletonTextSecondary)
                             Text(
-                                formatBeatTime(state.loopStart, state.signatureNumerator),
+                                formatBeatTime(state.loopStart, num),
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 13.sp
                             )
                         }
-                        val maxLoopRange = if (state.songLength > 0f) state.songLength else 1000f
+                        Text("Bar ${startBar + 1}", fontSize = 10.sp, color = AbletonTextSecondary)
                         Slider(
-                            value = state.loopStart,
-                            onValueChange = { viewModel.setLoopStart(it) },
-                            valueRange = 0f..maxLoopRange,
+                            value = startBar.toFloat(),
+                            onValueChange = {
+                                viewModel.setLoopStart(it.toInt() * num.toFloat() + startBeatInBar)
+                            },
+                            valueRange = 0f..maxBars.toFloat(),
+                            steps = maxBars - 1,
                             colors = SliderDefaults.colors(
                                 thumbColor = AbletonYellow,
                                 activeTrackColor = AbletonYellow,
                                 inactiveTrackColor = AbletonCard
                             )
                         )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            OutlinedButton(
+                                onClick = { viewModel.setLoopStart((state.loopStart - num).coerceAtLeast(0f)) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) { Text("-Bar", fontSize = 11.sp) }
+                            OutlinedButton(
+                                onClick = { viewModel.setLoopStart((state.loopStart - 1f).coerceAtLeast(0f)) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) { Text("-Beat", fontSize = 11.sp) }
+                            OutlinedButton(
+                                onClick = { viewModel.setLoopStart(state.loopStart + 1f) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) { Text("+Beat", fontSize = 11.sp) }
+                            OutlinedButton(
+                                onClick = { viewModel.setLoopStart(state.loopStart + num) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) { Text("+Bar", fontSize = 11.sp) }
+                        }
 
-                        Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(12.dp))
 
-                        // Loop end (shown as end point, controlled as length)
+                        // Loop length — bar slider + beat buttons
                         val loopEnd = state.loopStart + state.loopLength
+                        val lengthBars = (state.loopLength / num).toInt().coerceAtLeast(0)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -258,34 +298,62 @@ fun TransportScreen(viewModel: TransportViewModel) {
                         ) {
                             Text("End", fontSize = 13.sp, color = AbletonTextSecondary)
                             Text(
-                                formatBeatTime(loopEnd, state.signatureNumerator),
+                                formatBeatTime(loopEnd, num),
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 13.sp
                             )
                         }
+                        Text("Length: ${lengthBars} bar${if (lengthBars != 1) "s" else ""}", fontSize = 10.sp, color = AbletonTextSecondary)
                         Slider(
-                            value = state.loopLength,
-                            onValueChange = { viewModel.setLoopLength(it) },
-                            valueRange = 1f..maxLoopRange,
+                            value = lengthBars.toFloat(),
+                            onValueChange = {
+                                val newLen = (it.toInt() * num.toFloat()).coerceAtLeast(num.toFloat())
+                                viewModel.setLoopLength(newLen)
+                            },
+                            valueRange = 1f..maxBars.toFloat().coerceAtLeast(2f),
+                            steps = (maxBars - 2).coerceAtLeast(0),
                             colors = SliderDefaults.colors(
                                 thumbColor = AbletonYellow,
                                 activeTrackColor = AbletonYellow,
                                 inactiveTrackColor = AbletonCard
                             )
                         )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            OutlinedButton(
+                                onClick = { viewModel.setLoopLength((state.loopLength - num).coerceAtLeast(num.toFloat())) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) { Text("-Bar", fontSize = 11.sp) }
+                            OutlinedButton(
+                                onClick = { viewModel.setLoopLength((state.loopLength - 1f).coerceAtLeast(1f)) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) { Text("-Beat", fontSize = 11.sp) }
+                            OutlinedButton(
+                                onClick = { viewModel.setLoopLength(state.loopLength + 1f) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) { Text("+Beat", fontSize = 11.sp) }
+                            OutlinedButton(
+                                onClick = { viewModel.setLoopLength(state.loopLength + num) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) { Text("+Bar", fontSize = 11.sp) }
+                        }
 
-                        // Quick loop length buttons
+                        Spacer(Modifier.height(8.dp))
+
+                        // Quick loop length presets
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
                             listOf(1, 2, 4, 8, 16).forEach { bars ->
-                                val beats = bars * state.signatureNumerator.toFloat()
+                                val beats = bars * num.toFloat()
                                 OutlinedButton(
                                     onClick = { viewModel.setLoopLength(beats) },
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                     colors = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = if (state.loopLength == beats) AbletonYellow
+                                        contentColor = if (lengthBars == bars) AbletonYellow
                                             else AbletonTextSecondary
                                     )
                                 ) {
