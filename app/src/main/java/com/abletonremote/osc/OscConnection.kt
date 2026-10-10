@@ -5,6 +5,8 @@ import com.illposed.osc.MessageSelector
 import com.illposed.osc.OSCMessage
 import com.illposed.osc.OSCMessageEvent
 import com.illposed.osc.OSCMessageListener
+import com.illposed.osc.OSCSerializerAndParserBuilder
+import com.illposed.osc.argument.handler.*
 import com.illposed.osc.transport.OSCPortIn
 import com.illposed.osc.transport.OSCPortOut
 import kotlinx.coroutines.*
@@ -38,16 +40,53 @@ class OscConnection(
         override fun matches(messageEvent: OSCMessageEvent): Boolean = true
     }
 
+    companion object {
+        fun createAndroidSafeBuilder(): OSCSerializerAndParserBuilder {
+            val builder = OSCSerializerAndParserBuilder()
+            // Disable default handlers (which include AwtColorArgumentHandler
+            // that crashes on Android due to java.awt.Color not existing)
+            builder.setUsingDefaultHandlers(false)
+
+            // Register all safe handlers manually
+            val safeHandlers = listOf(
+                BlobArgumentHandler.INSTANCE,
+                BooleanFalseArgumentHandler.INSTANCE,
+                BooleanTrueArgumentHandler.INSTANCE,
+                CharArgumentHandler.INSTANCE,
+                ColorArgumentHandler.INSTANCE,
+                DoubleArgumentHandler.INSTANCE,
+                FloatArgumentHandler.INSTANCE,
+                ImpulseArgumentHandler.INSTANCE,
+                IntegerArgumentHandler.INSTANCE,
+                LongArgumentHandler.INSTANCE,
+                MidiMessageArgumentHandler.INSTANCE,
+                NullArgumentHandler.INSTANCE,
+                TimeTag64ArgumentHandler.INSTANCE,
+                UnsignedIntegerArgumentHandler.INSTANCE,
+                StringArgumentHandler(),
+                SymbolArgumentHandler(),
+                ByteArrayBlobArgumentHandler.INSTANCE,
+                DateTimeStampArgumentHandler.INSTANCE
+            )
+            for (handler in safeHandlers) {
+                builder.registerArgumentHandler(handler)
+            }
+            return builder
+        }
+    }
+
     fun connect() {
         scope.launch {
             try {
                 _connectionState.value = ConnectionState.CONNECTING
 
+                val builder = createAndroidSafeBuilder()
+
                 val remote = InetSocketAddress(InetAddress.getByName(host), sendPort)
-                portOut = OSCPortOut(remote)
+                portOut = OSCPortOut(builder, remote)
 
                 val local = InetSocketAddress(InetAddress.getByName("0.0.0.0"), receivePort)
-                portIn = OSCPortIn(local)
+                portIn = OSCPortIn(builder, local)
                 portIn!!.dispatcher.addListener(allMessageSelector,
                     OSCMessageListener { event ->
                         val msg = event.message
@@ -58,7 +97,6 @@ class OscConnection(
                 )
                 portIn!!.startListening()
 
-                // Send test and wait briefly for a reply
                 val testMsg = OSCMessage("/live/test")
                 portOut!!.send(testMsg)
 

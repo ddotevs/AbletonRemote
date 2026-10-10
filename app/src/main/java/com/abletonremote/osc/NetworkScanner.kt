@@ -27,7 +27,8 @@ object NetworkScanner {
                     if (!addr.isReachable(500)) return@async
 
                     val remote = InetSocketAddress(addr, port)
-                    val portOut = OSCPortOut(remote)
+                    val builder = OscConnection.createAndroidSafeBuilder()
+                    val portOut = OSCPortOut(builder, remote)
                     try {
                         portOut.send(OSCMessage("/live/test"))
                         onFound(DiscoveredServer(host = ip, name = "Ableton @ $ip"))
