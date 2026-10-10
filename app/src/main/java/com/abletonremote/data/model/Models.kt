@@ -11,7 +11,11 @@ data class TrackState(
     val canBeArmed: Boolean = true,
     val meterLeft: Float = 0f,
     val meterRight: Float = 0f,
-    val color: Int = 0
+    val color: Int = 0,
+    val inputRoutingType: String = "",
+    val availableInputTypes: List<String> = emptyList(),
+    val inputRoutingChannel: String = "",
+    val availableInputChannels: List<String> = emptyList()
 )
 
 data class TransportState(

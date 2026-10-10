@@ -14,4 +14,7 @@ class MixerViewModel(
     fun toggleMute(trackId: Int, currentMute: Boolean) = repository.setTrackMute(trackId, !currentMute)
     fun toggleSolo(trackId: Int, currentSolo: Boolean) = repository.setTrackSolo(trackId, !currentSolo)
     fun toggleArm(trackId: Int, currentArm: Boolean) = repository.setTrackArm(trackId, !currentArm)
+    fun setInputType(trackId: Int, type: String) = repository.setTrackInputRoutingType(trackId, type)
+    fun setInputChannel(trackId: Int, channel: String) = repository.setTrackInputRoutingChannel(trackId, channel)
+    fun createAudioTrack() = repository.createAudioTrack()
 }

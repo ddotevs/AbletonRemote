@@ -183,6 +183,10 @@ class AbletonRepository(
                 conn.send("/live/track/get/solo", i)
                 conn.send("/live/track/get/arm", i)
                 conn.send("/live/track/get/color", i)
+                conn.send("/live/track/get/input_routing_type", i)
+                conn.send("/live/track/get/available_input_routing_types", i)
+                conn.send("/live/track/get/input_routing_channel", i)
+                conn.send("/live/track/get/available_input_routing_channels", i)
 
                 conn.startListening("/live/track/get/volume", i)
                 conn.startListening("/live/track/get/panning", i)
@@ -202,6 +206,10 @@ class AbletonRepository(
             launch { collectTrackProperty(conn, "/live/track/get/color") { track, v -> track.copy(color = (v as Number).toInt()) } }
             launch { collectTrackProperty(conn, "/live/track/get/output_meter_left") { track, v -> track.copy(meterLeft = (v as Number).toFloat()) } }
             launch { collectTrackProperty(conn, "/live/track/get/output_meter_right") { track, v -> track.copy(meterRight = (v as Number).toFloat()) } }
+            launch { collectTrackProperty(conn, "/live/track/get/input_routing_type") { track, v -> track.copy(inputRoutingType = v as String) } }
+            launch { collectTrackProperty(conn, "/live/track/get/input_routing_channel") { track, v -> track.copy(inputRoutingChannel = v as String) } }
+            launch { collectTrackListProperty(conn, "/live/track/get/available_input_routing_types") { track, v -> track.copy(availableInputTypes = v) } }
+            launch { collectTrackListProperty(conn, "/live/track/get/available_input_routing_channels") { track, v -> track.copy(availableInputChannels = v) } }
         }
     }
 
@@ -217,6 +225,24 @@ class AbletonRepository(
                 _tracks.update { list ->
                     list.map { track ->
                         if (track.index == trackIndex) update(track, value) else track
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun collectTrackListProperty(
+        conn: OscConnection,
+        address: String,
+        update: (TrackState, List<String>) -> TrackState
+    ) {
+        conn.messagesAt(address).collect { args ->
+            if (args.isNotEmpty()) {
+                val trackIndex = (args[0] as Number).toInt()
+                val values = args.drop(1).map { it.toString() }
+                _tracks.update { list ->
+                    list.map { track ->
+                        if (track.index == trackIndex) update(track, values) else track
                     }
                 }
             }
@@ -260,4 +286,13 @@ class AbletonRepository(
 
     fun setTrackArm(trackId: Int, arm: Boolean) =
         activeConn()?.send("/live/track/set/arm", trackId, if (arm) 1 else 0)
+
+    fun setTrackInputRoutingType(trackId: Int, type: String) =
+        activeConn()?.send("/live/track/set/input_routing_type", trackId, type)
+
+    fun setTrackInputRoutingChannel(trackId: Int, channel: String) =
+        activeConn()?.send("/live/track/set/input_routing_channel", trackId, channel)
+
+    fun createAudioTrack(index: Int = -1) =
+        activeConn()?.send("/live/song/create_audio_track", index)
 }
