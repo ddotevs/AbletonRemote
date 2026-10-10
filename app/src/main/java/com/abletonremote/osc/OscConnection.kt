@@ -58,8 +58,7 @@ class OscConnection(
                 TimeTag64ArgumentHandler.INSTANCE,
                 UnsignedIntegerArgumentHandler.INSTANCE,
                 StringArgumentHandler(),
-                SymbolArgumentHandler(),
-                DateTimeStampArgumentHandler.INSTANCE
+                SymbolArgumentHandler()
             )
             for (handler in safeHandlers) {
                 builder.registerArgumentHandler(handler)
