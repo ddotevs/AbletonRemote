@@ -24,9 +24,12 @@ class AbletonRepository(
 
     init {
         scope.launch {
-            connectionManager.activeConnection.collect { conn ->
+            connectionManager.activeConnection.collectLatest { conn ->
                 listenerJob?.cancel()
-                if (conn != null && conn.connectionState.value == ConnectionState.CONNECTED) {
+                if (conn == null) return@collectLatest
+                // Wait for the connection to actually be CONNECTED
+                conn.connectionState.first { it == ConnectionState.CONNECTED || it == ConnectionState.ERROR }
+                if (conn.connectionState.value == ConnectionState.CONNECTED) {
                     listenerJob = scope.launch { subscribeToAll(conn) }
                 }
             }
