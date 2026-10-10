@@ -14,8 +14,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.abletonremote.data.db.ServerEntity
 import com.abletonremote.data.model.ConnectionState
 import com.abletonremote.osc.DiscoveredServer
@@ -31,6 +33,7 @@ fun ConnectionScreen(viewModel: ConnectionViewModel) {
     val editingServer by viewModel.editingServer.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val discoveredServers by viewModel.discoveredServers.collectAsState()
+    val debugLog by viewModel.debugLog.collectAsState(initial = emptyList())
 
     Scaffold(
         floatingActionButton = {
@@ -185,6 +188,36 @@ fun ConnectionScreen(viewModel: ConnectionViewModel) {
                             Text("Tap + to add manually, or scan your network",
                                 color = AbletonTextSecondary,
                                 style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+
+            // Debug log panel
+            if (debugLog.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(16.dp))
+                    Text("Debug Log", style = MaterialTheme.typography.titleSmall,
+                        color = AbletonYellow)
+                }
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = AbletonDark),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            for (line in debugLog) {
+                                Text(
+                                    line,
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = if ("ERROR" in line) AbletonRed
+                                        else if ("Received" in line || "REPLY" in line || "OSC:" in line) AbletonGreen
+                                        else AbletonTextSecondary,
+                                    modifier = Modifier.padding(vertical = 1.dp)
+                                )
+                            }
                         }
                     }
                 }

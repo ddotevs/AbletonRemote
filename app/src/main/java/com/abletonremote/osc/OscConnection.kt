@@ -33,8 +33,17 @@ class OscConnection(
     )
     val incomingMessages: SharedFlow<Pair<String, List<Any>>> = _incomingMessages.asSharedFlow()
 
+    private val _debugLog = MutableStateFlow<List<String>>(emptyList())
+    val debugLog: StateFlow<List<String>> = _debugLog.asStateFlow()
+
     private val listeners = mutableSetOf<String>()
     private var heartbeatJob: Job? = null
+
+    private fun log(msg: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+            .format(java.util.Date())
+        _debugLog.value = (_debugLog.value + "[$timestamp] $msg").takeLast(50)
+    }
 
     companion object {
         fun createAndroidSafeBuilder(): OSCSerializerAndParserBuilder {
@@ -72,30 +81,36 @@ class OscConnection(
         scope.launch {
             try {
                 _connectionState.value = ConnectionState.CONNECTING
+                log("Connecting to $host:$sendPort ...")
 
                 val builder = createAndroidSafeBuilder()
+                log("Builder created (no AWT)")
 
-                // AbletonOSC replies to port 11001 on the sender's IP.
-                // We bind a single DatagramSocket to port 11001 for receiving,
-                // and create OSCPortOut bound to the same local port for sending.
                 val local = InetSocketAddress(InetAddress.getByName("0.0.0.0"), receivePort)
                 val remote = InetSocketAddress(InetAddress.getByName(host), sendPort)
-                portOut = OSCPortOut(builder, remote, local)
+                log("Resolved remote: ${remote.address.hostAddress}:$sendPort")
 
-                // Open a separate receive socket with SO_REUSEADDR on the same port
+                portOut = OSCPortOut(builder, remote, local)
+                log("OSCPortOut created, local port=$receivePort")
+
                 receiveSocket = DatagramSocket(null)
                 receiveSocket!!.reuseAddress = true
                 receiveSocket!!.bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), receivePort))
+                log("Receive socket bound to 0.0.0.0:$receivePort")
 
                 val parser = builder.buildParser()
                 startReceiveLoop(parser)
+                log("Receive loop started")
 
                 val testMsg = OSCMessage("/live/test")
                 portOut!!.send(testMsg)
+                log("Sent /live/test")
 
                 _connectionState.value = ConnectionState.CONNECTED
+                log("State set to CONNECTED")
                 startHeartbeat()
             } catch (e: Exception) {
+                log("ERROR: ${e.javaClass.simpleName}: ${e.message}")
                 e.printStackTrace()
                 _connectionState.value = ConnectionState.ERROR
             }
@@ -105,18 +120,23 @@ class OscConnection(
     private fun startReceiveLoop(parser: OSCParser) {
         receiveJob = scope.launch {
             val buf = ByteArray(4096)
+            log("Receive loop waiting for packets...")
             while (isActive) {
                 try {
                     val pkt = DatagramPacket(buf, buf.size)
                     receiveSocket?.receive(pkt) ?: break
+                    log("Received ${pkt.length} bytes from ${pkt.address}:${pkt.port}")
                     val data = ByteBuffer.wrap(buf, 0, pkt.length)
                     val oscPacket = parser.convert(data)
                     if (oscPacket is OSCMessage) {
+                        log("OSC: ${oscPacket.address} ${oscPacket.arguments}")
                         _incomingMessages.emit(oscPacket.address to oscPacket.arguments)
                     }
                 } catch (e: java.net.SocketException) {
-                    break // socket closed
+                    log("Socket closed, stopping receive loop")
+                    break
                 } catch (e: Exception) {
+                    log("Receive error: ${e.javaClass.simpleName}: ${e.message}")
                     e.printStackTrace()
                 }
             }
@@ -132,6 +152,7 @@ class OscConnection(
         receiveSocket = null
         portOut = null
         _connectionState.value = ConnectionState.DISCONNECTED
+        log("Disconnected")
     }
 
     fun send(address: String, vararg args: Any) {
@@ -140,6 +161,7 @@ class OscConnection(
                 val msg = OSCMessage(address, args.toList())
                 portOut?.send(msg)
             } catch (e: Exception) {
+                log("Send error ($address): ${e.javaClass.simpleName}: ${e.message}")
                 e.printStackTrace()
             }
         }
