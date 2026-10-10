@@ -1,18 +1,18 @@
 package com.abletonremote.osc
 
 import com.abletonremote.data.model.ConnectionState
-import com.illposed.osc.MessageSelector
 import com.illposed.osc.OSCMessage
-import com.illposed.osc.OSCMessageEvent
-import com.illposed.osc.OSCMessageListener
+import com.illposed.osc.OSCParser
 import com.illposed.osc.OSCSerializerAndParserBuilder
 import com.illposed.osc.argument.handler.*
-import com.illposed.osc.transport.OSCPortIn
 import com.illposed.osc.transport.OSCPortOut
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.nio.ByteBuffer
 
 class OscConnection(
     val id: String,
@@ -21,8 +21,9 @@ class OscConnection(
     val receivePort: Int = 11001
 ) {
     private var portOut: OSCPortOut? = null
-    private var portIn: OSCPortIn? = null
+    private var receiveSocket: DatagramSocket? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var receiveJob: Job? = null
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -35,19 +36,11 @@ class OscConnection(
     private val listeners = mutableSetOf<String>()
     private var heartbeatJob: Job? = null
 
-    private val allMessageSelector = object : MessageSelector {
-        override fun isInfoRequired(): Boolean = false
-        override fun matches(messageEvent: OSCMessageEvent): Boolean = true
-    }
-
     companion object {
         fun createAndroidSafeBuilder(): OSCSerializerAndParserBuilder {
             val builder = OSCSerializerAndParserBuilder()
-            // Disable default handlers (which include AwtColorArgumentHandler
-            // that crashes on Android due to java.awt.Color not existing)
             builder.setUsingDefaultHandlers(false)
 
-            // Register all safe handlers manually
             val safeHandlers = listOf(
                 BlobArgumentHandler.INSTANCE,
                 BooleanFalseArgumentHandler.INSTANCE,
@@ -82,20 +75,20 @@ class OscConnection(
 
                 val builder = createAndroidSafeBuilder()
 
-                val remote = InetSocketAddress(InetAddress.getByName(host), sendPort)
-                portOut = OSCPortOut(builder, remote)
-
+                // AbletonOSC replies to port 11001 on the sender's IP.
+                // We bind a single DatagramSocket to port 11001 for receiving,
+                // and create OSCPortOut bound to the same local port for sending.
                 val local = InetSocketAddress(InetAddress.getByName("0.0.0.0"), receivePort)
-                portIn = OSCPortIn(builder, local)
-                portIn!!.dispatcher.addListener(allMessageSelector,
-                    OSCMessageListener { event ->
-                        val msg = event.message
-                        scope.launch {
-                            _incomingMessages.emit(msg.address to msg.arguments)
-                        }
-                    }
-                )
-                portIn!!.startListening()
+                val remote = InetSocketAddress(InetAddress.getByName(host), sendPort)
+                portOut = OSCPortOut(builder, remote, local)
+
+                // Open a separate receive socket with SO_REUSEADDR on the same port
+                receiveSocket = DatagramSocket(null)
+                receiveSocket!!.reuseAddress = true
+                receiveSocket!!.bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), receivePort))
+
+                val parser = builder.buildParser()
+                startReceiveLoop(parser)
 
                 val testMsg = OSCMessage("/live/test")
                 portOut!!.send(testMsg)
@@ -109,17 +102,34 @@ class OscConnection(
         }
     }
 
+    private fun startReceiveLoop(parser: OSCParser) {
+        receiveJob = scope.launch {
+            val buf = ByteArray(4096)
+            while (isActive) {
+                try {
+                    val pkt = DatagramPacket(buf, buf.size)
+                    receiveSocket?.receive(pkt) ?: break
+                    val data = ByteBuffer.wrap(buf, 0, pkt.length)
+                    val oscPacket = parser.convert(data)
+                    if (oscPacket is OSCMessage) {
+                        _incomingMessages.emit(oscPacket.address to oscPacket.arguments)
+                    }
+                } catch (e: java.net.SocketException) {
+                    break // socket closed
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+
     fun disconnect() {
         heartbeatJob?.cancel()
+        receiveJob?.cancel()
         listeners.clear()
-        try {
-            portIn?.stopListening()
-            portIn?.close()
-        } catch (_: Exception) {}
-        try {
-            portOut?.close()
-        } catch (_: Exception) {}
-        portIn = null
+        try { receiveSocket?.close() } catch (_: Exception) {}
+        try { portOut?.close() } catch (_: Exception) {}
+        receiveSocket = null
         portOut = null
         _connectionState.value = ConnectionState.DISCONNECTED
     }
