@@ -89,17 +89,19 @@ fun TransportScreen(viewModel: TransportViewModel) {
                     Spacer(Modifier.height(4.dp))
 
                     val maxPos = if (state.songLength > 0f) state.songLength else 1000f
+                    val steps = maxPos.toInt().coerceAtLeast(1)
                     Slider(
-                        value = if (isDraggingPosition) dragPosition else state.currentTime,
+                        value = if (isDraggingPosition) dragPosition else kotlin.math.floor(state.currentTime),
                         onValueChange = {
                             isDraggingPosition = true
-                            dragPosition = it
+                            dragPosition = kotlin.math.floor(it)
                         },
                         onValueChangeFinished = {
                             viewModel.setSongPosition(dragPosition)
                             isDraggingPosition = false
                         },
                         valueRange = 0f..maxPos,
+                        steps = steps - 1,
                         colors = SliderDefaults.colors(
                             thumbColor = AbletonAccent,
                             activeTrackColor = AbletonAccent,
