@@ -28,7 +28,7 @@ class OscConnection(
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
     private val _incomingMessages = MutableSharedFlow<Pair<String, List<Any>>>(
-        extraBufferCapacity = 256
+        extraBufferCapacity = 512
     )
     val incomingMessages: SharedFlow<Pair<String, List<Any>>> = _incomingMessages.asSharedFlow()
 
@@ -36,6 +36,10 @@ class OscConnection(
     private var heartbeatJob: Job? = null
 
     private val builder = createAndroidSafeBuilder()
+
+    // Reusable send buffer — guarded by sendLock for thread safety
+    private val sendLock = Any()
+    private val sendBuffer = ByteBuffer.allocate(4096)
 
     companion object {
         fun createAndroidSafeBuilder(): OSCSerializerAndParserBuilder {
@@ -72,7 +76,6 @@ class OscConnection(
                 remoteAddress = InetAddress.getByName(host)
                 log("Resolved: ${remoteAddress!!.hostAddress}")
 
-                // Single socket: bind to receivePort, use for both send and receive
                 socket = DatagramSocket(null)
                 socket!!.reuseAddress = true
                 socket!!.bind(InetSocketAddress("0.0.0.0", receivePort))
@@ -97,17 +100,19 @@ class OscConnection(
     }
 
     private fun sendOsc(address: String, vararg args: Any) {
-        try {
-            val msg = OSCMessage(address, args.toList())
-            val outBuf = ByteBuffer.allocate(4096)
-            val receiver = com.illposed.osc.BufferBytesReceiver(outBuf)
-            val serializer = builder.buildSerializer(receiver)
-            serializer.write(msg)
-            val bytes = receiver.toByteArray()
-            val pkt = DatagramPacket(bytes, bytes.size, remoteAddress, sendPort)
-            socket?.send(pkt)
-        } catch (e: Exception) {
-            log("Send err ($address): ${e.javaClass.simpleName}: ${e.message}")
+        synchronized(sendLock) {
+            try {
+                val msg = OSCMessage(address, args.toList())
+                sendBuffer.clear()
+                val receiver = com.illposed.osc.BufferBytesReceiver(sendBuffer)
+                val serializer = builder.buildSerializer(receiver)
+                serializer.write(msg)
+                val bytes = receiver.toByteArray()
+                val pkt = DatagramPacket(bytes, bytes.size, remoteAddress, sendPort)
+                socket?.send(pkt)
+            } catch (e: Exception) {
+                log("Send err ($address): ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
     }
 
@@ -119,11 +124,9 @@ class OscConnection(
                 try {
                     val pkt = DatagramPacket(buf, buf.size)
                     socket?.receive(pkt) ?: break
-                    log("Recv ${pkt.length}B from ${pkt.address}:${pkt.port}")
                     val data = ByteBuffer.wrap(buf, 0, pkt.length)
                     val oscPacket = parser.convert(data)
                     if (oscPacket is OSCMessage) {
-                        log("OSC: ${oscPacket.address} ${oscPacket.arguments}")
                         _incomingMessages.emit(oscPacket.address to oscPacket.arguments)
                     }
                 } catch (e: java.net.SocketException) {
@@ -151,6 +154,19 @@ class OscConnection(
         scope.launch { sendOsc(address, *args) }
     }
 
+    fun sendImmediate(address: String, vararg args: Any) {
+        sendOsc(address, *args)
+    }
+
+    fun sendBatch(messages: List<Pair<String, List<Any>>>) {
+        scope.launch {
+            for ((address, args) in messages) {
+                sendOsc(address, *args.toTypedArray())
+            }
+            log("Batch sent ${messages.size} messages")
+        }
+    }
+
     fun messagesAt(address: String): Flow<List<Any>> {
         return incomingMessages
             .filter { it.first == address }
@@ -160,19 +176,19 @@ class OscConnection(
     fun startListening(property: String, vararg args: Any) {
         val listenAddress = property.replace("/get/", "/start_listen/")
         listeners.add(listenAddress)
-        send(listenAddress, *args)
+        sendOsc(listenAddress, *args)
     }
 
     fun stopListening(property: String, vararg args: Any) {
         val listenAddress = property.replace("/get/", "/stop_listen/")
         listeners.remove(listenAddress.replace("/stop_listen/", "/start_listen/"))
-        send(listenAddress, *args)
+        sendOsc(listenAddress, *args)
     }
 
     fun stopAllListeners() {
         listeners.toList().forEach { addr ->
             val stopAddr = addr.replace("/start_listen/", "/stop_listen/")
-            send(stopAddr)
+            sendOsc(stopAddr)
         }
         listeners.clear()
     }

@@ -37,30 +37,30 @@ class AbletonRepository(
     }
 
     private suspend fun subscribeToAll(conn: OscConnection) = coroutineScope {
-        // Start collectors FIRST so they're ready when replies arrive
         launch { subscribeTransport(conn) }
         launch { subscribeTracks(conn) }
-        // Small delay to ensure collectors are active before sending queries
-        delay(100)
+        delay(50)
         fetchInitialState(conn)
     }
 
-    private suspend fun fetchInitialState(conn: OscConnection) {
-        conn.send("/live/song/get/tempo")
-        conn.send("/live/song/get/is_playing")
-        conn.send("/live/song/get/metronome")
-        conn.send("/live/song/get/loop")
-        conn.send("/live/song/get/loop_start")
-        conn.send("/live/song/get/loop_length")
-        conn.send("/live/song/get/signature_numerator")
-        conn.send("/live/song/get/signature_denominator")
-        conn.send("/live/song/get/record_mode")
-        conn.send("/live/song/get/session_record")
-        conn.send("/live/song/get/song_length")
-        conn.send("/live/song/get/punch_in")
-        conn.send("/live/song/get/punch_out")
-        conn.send("/live/song/get/cue_points")
-        conn.send("/live/song/get/num_tracks")
+    private fun fetchInitialState(conn: OscConnection) {
+        conn.sendBatch(listOf(
+            "/live/song/get/tempo" to emptyList(),
+            "/live/song/get/is_playing" to emptyList(),
+            "/live/song/get/metronome" to emptyList(),
+            "/live/song/get/loop" to emptyList(),
+            "/live/song/get/loop_start" to emptyList(),
+            "/live/song/get/loop_length" to emptyList(),
+            "/live/song/get/signature_numerator" to emptyList(),
+            "/live/song/get/signature_denominator" to emptyList(),
+            "/live/song/get/record_mode" to emptyList(),
+            "/live/song/get/session_record" to emptyList(),
+            "/live/song/get/song_length" to emptyList(),
+            "/live/song/get/punch_in" to emptyList(),
+            "/live/song/get/punch_out" to emptyList(),
+            "/live/song/get/cue_points" to emptyList(),
+            "/live/song/get/num_tracks" to emptyList()
+        ))
     }
 
     private suspend fun subscribeTransport(conn: OscConnection) = coroutineScope {
@@ -200,26 +200,26 @@ class AbletonRepository(
             val trackList = (0 until numTracks).map { i -> TrackState(index = i) }
             _tracks.value = trackList
 
-            for (i in 0 until numTracks) {
-                conn.send("/live/track/get/name", i)
-                conn.send("/live/track/get/volume", i)
-                conn.send("/live/track/get/panning", i)
-                conn.send("/live/track/get/mute", i)
-                conn.send("/live/track/get/solo", i)
-                conn.send("/live/track/get/arm", i)
-                conn.send("/live/track/get/color", i)
-                conn.send("/live/track/get/input_routing_type", i)
-                conn.send("/live/track/get/available_input_routing_types", i)
-                conn.send("/live/track/get/input_routing_channel", i)
-                conn.send("/live/track/get/available_input_routing_channels", i)
+            // Batch all initial track queries into a single send operation
+            val getMessages = mutableListOf<Pair<String, List<Any>>>()
+            val getProps = listOf("name", "volume", "panning", "mute", "solo", "arm", "color",
+                "input_routing_type", "available_input_routing_types",
+                "input_routing_channel", "available_input_routing_channels")
 
-                conn.startListening("/live/track/get/volume", i)
-                conn.startListening("/live/track/get/panning", i)
-                conn.startListening("/live/track/get/mute", i)
-                conn.startListening("/live/track/get/solo", i)
-                conn.startListening("/live/track/get/arm", i)
-                conn.startListening("/live/track/get/output_meter_left", i)
-                conn.startListening("/live/track/get/output_meter_right", i)
+            for (i in 0 until numTracks) {
+                for (prop in getProps) {
+                    getMessages.add("/live/track/get/$prop" to listOf(i))
+                }
+            }
+            conn.sendBatch(getMessages)
+
+            // Register listeners — these use sendImmediate (synchronous, no coroutine per call)
+            val listenProps = listOf("volume", "panning", "mute", "solo", "arm",
+                "output_meter_left", "output_meter_right")
+            for (i in 0 until numTracks) {
+                for (prop in listenProps) {
+                    conn.startListening("/live/track/get/$prop", i)
+                }
             }
 
             launch { collectTrackProperty(conn, "/live/track/get/name") { track, v -> track.copy(name = v as String) } }
