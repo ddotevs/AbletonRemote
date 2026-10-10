@@ -16,7 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.abletonremote.ui.theme.*
@@ -26,9 +25,13 @@ fun TransportScreen(viewModel: TransportViewModel) {
     val state by viewModel.transportState.collectAsState()
     val cuePoints by viewModel.cuePoints.collectAsState()
 
+    // Local state for slider dragging (avoids jitter from live updates while dragging)
+    var isDraggingPosition by remember { mutableStateOf(false) }
+    var dragPosition by remember { mutableFloatStateOf(0f) }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // Beat counter
         item {
@@ -37,7 +40,7 @@ fun TransportScreen(viewModel: TransportViewModel) {
                 colors = CardDefaults.cardColors(containerColor = AbletonSurface)
             ) {
                 Column(
-                    modifier = Modifier.padding(24.dp).fillMaxWidth(),
+                    modifier = Modifier.padding(20.dp).fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
@@ -45,7 +48,11 @@ fun TransportScreen(viewModel: TransportViewModel) {
                         fontSize = 48.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
-                        color = if (state.isPlaying) AbletonGreen else AbletonTextPrimary
+                        color = when {
+                            state.isRecording -> AbletonRed
+                            state.isPlaying -> AbletonGreen
+                            else -> AbletonTextPrimary
+                        }
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -53,6 +60,76 @@ fun TransportScreen(viewModel: TransportViewModel) {
                         style = MaterialTheme.typography.bodySmall,
                         color = AbletonTextSecondary
                     )
+                }
+            }
+        }
+
+        // Song position scrubber
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = AbletonSurface)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Position", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            formatBeatTime(
+                                if (isDraggingPosition) dragPosition else state.currentTime,
+                                state.signatureNumerator
+                            ),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 14.sp,
+                            color = AbletonAccent
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+
+                    val maxPos = if (state.songLength > 0f) state.songLength else 1000f
+                    Slider(
+                        value = if (isDraggingPosition) dragPosition else state.currentTime,
+                        onValueChange = {
+                            isDraggingPosition = true
+                            dragPosition = it
+                        },
+                        onValueChangeFinished = {
+                            viewModel.setSongPosition(dragPosition)
+                            isDraggingPosition = false
+                        },
+                        valueRange = 0f..maxPos,
+                        colors = SliderDefaults.colors(
+                            thumbColor = AbletonAccent,
+                            activeTrackColor = AbletonAccent,
+                            inactiveTrackColor = AbletonCard
+                        )
+                    )
+
+                    // Quick jump buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        OutlinedButton(
+                            onClick = { viewModel.setSongPosition(0f) },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) { Text("Start", fontSize = 12.sp) }
+                        OutlinedButton(
+                            onClick = {
+                                val newPos = (state.currentTime - state.signatureNumerator).coerceAtLeast(0f)
+                                viewModel.setSongPosition(newPos)
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) { Text("-1 Bar", fontSize = 12.sp) }
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.setSongPosition(state.currentTime + state.signatureNumerator)
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) { Text("+1 Bar", fontSize = 12.sp) }
+                    }
                 }
             }
         }
@@ -83,6 +160,139 @@ fun TransportScreen(viewModel: TransportViewModel) {
                     tint = AbletonRed,
                     isActive = state.isRecording
                 ) { viewModel.record() }
+            }
+        }
+
+        // Punch In/Out + Metronome + Loop toggles
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ToggleCard(
+                    label = "Punch In",
+                    isOn = state.punchIn,
+                    activeColor = AbletonRed,
+                    modifier = Modifier.weight(1f)
+                ) { viewModel.setPunchIn(!state.punchIn) }
+
+                ToggleCard(
+                    label = "Punch Out",
+                    isOn = state.punchOut,
+                    activeColor = AbletonRed,
+                    modifier = Modifier.weight(1f)
+                ) { viewModel.setPunchOut(!state.punchOut) }
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ToggleCard(
+                    label = "Metronome",
+                    isOn = state.metronome,
+                    activeColor = AbletonBlue,
+                    modifier = Modifier.weight(1f)
+                ) { viewModel.setMetronome(!state.metronome) }
+
+                ToggleCard(
+                    label = "Loop",
+                    isOn = state.loop,
+                    activeColor = AbletonYellow,
+                    modifier = Modifier.weight(1f)
+                ) { viewModel.setLoop(!state.loop) }
+            }
+        }
+
+        // Loop region controls (visible when loop is on)
+        if (state.loop) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = AbletonYellow.copy(alpha = 0.1f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Loop Region", style = MaterialTheme.typography.titleSmall,
+                            color = AbletonYellow)
+                        Spacer(Modifier.height(8.dp))
+
+                        // Loop start
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Start", fontSize = 13.sp, color = AbletonTextSecondary)
+                            Text(
+                                formatBeatTime(state.loopStart, state.signatureNumerator),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp
+                            )
+                        }
+                        val maxLoopRange = if (state.songLength > 0f) state.songLength else 1000f
+                        Slider(
+                            value = state.loopStart,
+                            onValueChange = { viewModel.setLoopStart(it) },
+                            valueRange = 0f..maxLoopRange,
+                            colors = SliderDefaults.colors(
+                                thumbColor = AbletonYellow,
+                                activeTrackColor = AbletonYellow,
+                                inactiveTrackColor = AbletonCard
+                            )
+                        )
+
+                        Spacer(Modifier.height(4.dp))
+
+                        // Loop end (shown as end point, controlled as length)
+                        val loopEnd = state.loopStart + state.loopLength
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("End", fontSize = 13.sp, color = AbletonTextSecondary)
+                            Text(
+                                formatBeatTime(loopEnd, state.signatureNumerator),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp
+                            )
+                        }
+                        Slider(
+                            value = state.loopLength,
+                            onValueChange = { viewModel.setLoopLength(it) },
+                            valueRange = 1f..maxLoopRange,
+                            colors = SliderDefaults.colors(
+                                thumbColor = AbletonYellow,
+                                activeTrackColor = AbletonYellow,
+                                inactiveTrackColor = AbletonCard
+                            )
+                        )
+
+                        // Quick loop length buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            listOf(1, 2, 4, 8, 16).forEach { bars ->
+                                val beats = bars * state.signatureNumerator.toFloat()
+                                OutlinedButton(
+                                    onClick = { viewModel.setLoopLength(beats) },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = if (state.loopLength == beats) AbletonYellow
+                                            else AbletonTextSecondary
+                                    )
+                                ) {
+                                    Text("${bars}B", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -128,28 +338,6 @@ fun TransportScreen(viewModel: TransportViewModel) {
             }
         }
 
-        // Toggles row
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ToggleCard(
-                    label = "Metronome",
-                    isOn = state.metronome,
-                    activeColor = AbletonBlue,
-                    modifier = Modifier.weight(1f)
-                ) { viewModel.setMetronome(!state.metronome) }
-
-                ToggleCard(
-                    label = "Loop",
-                    isOn = state.loop,
-                    activeColor = AbletonYellow,
-                    modifier = Modifier.weight(1f)
-                ) { viewModel.setLoop(!state.loop) }
-            }
-        }
-
         // Undo/Redo row
         item {
             Row(
@@ -185,7 +373,7 @@ fun TransportScreen(viewModel: TransportViewModel) {
         if (cuePoints.isNotEmpty()) {
             item {
                 Text("Cue Points", style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(top = 8.dp))
+                    modifier = Modifier.padding(top = 4.dp))
             }
             items(cuePoints) { cue ->
                 Card(
@@ -200,7 +388,7 @@ fun TransportScreen(viewModel: TransportViewModel) {
                     ) {
                         Text(cue.name.ifBlank { "Cue ${cue.index + 1}" })
                         Text(
-                            "%.1f".format(cue.time),
+                            formatBeatTime(cue.time, state.signatureNumerator),
                             fontFamily = FontFamily.Monospace,
                             color = AbletonTextSecondary
                         )

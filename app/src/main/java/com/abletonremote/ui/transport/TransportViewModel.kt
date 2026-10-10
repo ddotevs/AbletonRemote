@@ -21,5 +21,10 @@ class TransportViewModel(
     fun setTempo(bpm: Float) = repository.setTempo(bpm)
     fun setMetronome(on: Boolean) = repository.setMetronome(on)
     fun setLoop(on: Boolean) = repository.setLoop(on)
+    fun setLoopStart(beats: Float) = repository.setLoopStart(beats)
+    fun setLoopLength(beats: Float) = repository.setLoopLength(beats)
     fun jumpToCue(index: Int) = repository.jumpToCue(index)
+    fun setSongPosition(beats: Float) = repository.setSongPosition(beats)
+    fun setPunchIn(on: Boolean) = repository.setPunchIn(on)
+    fun setPunchOut(on: Boolean) = repository.setPunchOut(on)
 }

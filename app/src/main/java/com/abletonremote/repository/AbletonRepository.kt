@@ -56,6 +56,9 @@ class AbletonRepository(
         conn.send("/live/song/get/signature_denominator")
         conn.send("/live/song/get/record_mode")
         conn.send("/live/song/get/session_record")
+        conn.send("/live/song/get/song_length")
+        conn.send("/live/song/get/punch_in")
+        conn.send("/live/song/get/punch_out")
         conn.send("/live/song/get/cue_points")
         conn.send("/live/song/get/num_tracks")
     }
@@ -64,7 +67,8 @@ class AbletonRepository(
         val transportProps = listOf(
             "is_playing", "tempo", "metronome", "loop", "loop_start",
             "loop_length", "current_song_time", "record_mode", "session_record",
-            "signature_numerator", "signature_denominator", "beat"
+            "signature_numerator", "signature_denominator", "beat",
+            "song_length", "punch_in", "punch_out"
         )
         transportProps.forEach { prop ->
             conn.startListening("/live/song/get/$prop")
@@ -165,6 +169,27 @@ class AbletonRepository(
                     i += 2
                 }
                 _cuePoints.value = points
+            }
+        }
+        launch {
+            conn.messagesAt("/live/song/get/song_length").collect { args ->
+                args.firstOrNull()?.let { v ->
+                    _transportState.update { it.copy(songLength = (v as Number).toFloat()) }
+                }
+            }
+        }
+        launch {
+            conn.messagesAt("/live/song/get/punch_in").collect { args ->
+                args.firstOrNull()?.let { v ->
+                    _transportState.update { it.copy(punchIn = v == 1 || v == true) }
+                }
+            }
+        }
+        launch {
+            conn.messagesAt("/live/song/get/punch_out").collect { args ->
+                args.firstOrNull()?.let { v ->
+                    _transportState.update { it.copy(punchOut = v == 1 || v == true) }
+                }
             }
         }
     }
@@ -269,6 +294,9 @@ class AbletonRepository(
     fun setLoopStart(beats: Float) = activeConn()?.send("/live/song/set/loop_start", beats)
     fun setLoopLength(beats: Float) = activeConn()?.send("/live/song/set/loop_length", beats)
     fun jumpToCue(index: Int) = activeConn()?.send("/live/song/cue_point/jump", index)
+    fun setSongPosition(beats: Float) = activeConn()?.send("/live/song/set/current_song_time", beats)
+    fun setPunchIn(on: Boolean) = activeConn()?.send("/live/song/set/punch_in", if (on) 1 else 0)
+    fun setPunchOut(on: Boolean) = activeConn()?.send("/live/song/set/punch_out", if (on) 1 else 0)
 
     // --- Track controls ---
 

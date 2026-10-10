@@ -30,7 +30,10 @@ data class TransportState(
     val currentTime: Float = 0f,
     val currentBeat: Int = 0,
     val signatureNumerator: Int = 4,
-    val signatureDenominator: Int = 4
+    val signatureDenominator: Int = 4,
+    val songLength: Float = 0f,
+    val punchIn: Boolean = false,
+    val punchOut: Boolean = false
 )
 
 data class CuePoint(
