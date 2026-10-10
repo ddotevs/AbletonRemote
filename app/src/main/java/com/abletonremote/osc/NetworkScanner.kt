@@ -5,7 +5,6 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.SocketTimeoutException
 
 data class DiscoveredServer(
     val host: String,
@@ -20,46 +19,61 @@ object NetworkScanner {
         timeoutMs: Long = 5000,
         onFound: (DiscoveredServer) -> Unit
     ) = withContext(Dispatchers.IO) {
-        // OSC message: /live/test with no args
+        // Single socket bound to 11001 — send probes from here,
+        // AbletonOSC replies to port 11001 on the sender's IP.
+        val sock: DatagramSocket
+        try {
+            sock = DatagramSocket(null)
+            sock.reuseAddress = true
+            sock.bind(InetSocketAddress("0.0.0.0", 11001))
+        } catch (_: Exception) {
+            // Port 11001 already in use (active connection) — can't scan while connected
+            onFound(DiscoveredServer(
+                host = "",
+                name = "Disconnect first to scan (port 11001 in use)"
+            ))
+            return@withContext
+        }
+        sock.soTimeout = 500
+
         val oscMsg = buildOscTestMessage()
+        val found = mutableSetOf<String>()
 
-        val jobs = (1..254).map { i ->
-            async {
-                val ip = "$subnet.$i"
-                try {
-                    val addr = InetAddress.getByName(ip)
-                    val sock = DatagramSocket()
-                    sock.soTimeout = 2000
+        // Send probes to all IPs on the subnet
+        for (i in 1..254) {
+            try {
+                val addr = InetAddress.getByName("$subnet.$i")
+                val pkt = DatagramPacket(oscMsg, oscMsg.size, addr, port)
+                sock.send(pkt)
+            } catch (_: Exception) {}
+        }
 
-                    val pkt = DatagramPacket(oscMsg, oscMsg.size, addr, port)
-                    sock.send(pkt)
-
-                    // Wait for a reply — only report if we actually get one
-                    val buf = ByteArray(256)
-                    val recv = DatagramPacket(buf, buf.size)
-                    try {
-                        sock.receive(recv)
-                        val response = String(buf, 0, recv.length, Charsets.US_ASCII)
-                        if (response.contains("/live/test") || response.contains("ok")) {
-                            onFound(DiscoveredServer(host = ip, name = "Ableton @ $ip"))
-                        }
-                    } catch (_: SocketTimeoutException) {
-                        // No reply — not AbletonOSC
+        // Now listen for replies
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val buf = ByteArray(256)
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                val recv = DatagramPacket(buf, buf.size)
+                sock.receive(recv)
+                val ip = recv.address.hostAddress ?: continue
+                if (ip !in found) {
+                    val response = String(buf, 0, recv.length, Charsets.US_ASCII)
+                    if (response.contains("/live/test") || response.contains("ok")) {
+                        found.add(ip)
+                        onFound(DiscoveredServer(host = ip, name = "Ableton @ $ip"))
                     }
-                    sock.close()
-                } catch (_: Exception) {}
+                }
+            } catch (_: java.net.SocketTimeoutException) {
+                // Keep waiting until deadline
+            } catch (_: Exception) {
+                break
             }
         }
 
-        withTimeoutOrNull(timeoutMs) {
-            jobs.awaitAll()
-        }
-        jobs.forEach { it.cancel() }
+        sock.close()
     }
 
     private fun buildOscTestMessage(): ByteArray {
-        // /live/test\0\0 (12 bytes, padded to 4-byte boundary)
-        // ,\0\0\0 (4 bytes type tag)
         val msg = ByteArray(16)
         val addr = "/live/test".toByteArray(Charsets.US_ASCII)
         System.arraycopy(addr, 0, msg, 0, addr.size)
