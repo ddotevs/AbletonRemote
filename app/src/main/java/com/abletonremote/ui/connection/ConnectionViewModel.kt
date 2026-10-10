@@ -22,9 +22,7 @@ class ConnectionViewModel(
 
     val activeConnectionId = connectionManager.activeConnectionId
 
-    val debugLog: Flow<List<String>> = connectionManager.activeConnection.flatMapLatest { conn ->
-        conn?.debugLog ?: flowOf(emptyList())
-    }
+    val debugLog: StateFlow<List<String>> = connectionManager.debugLog
 
     val connectionStates: StateFlow<Map<String, ConnectionState>> =
         connectionManager.connections.map { conns ->

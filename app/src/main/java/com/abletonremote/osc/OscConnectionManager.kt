@@ -12,6 +12,15 @@ class OscConnectionManager {
     private val _activeConnectionId = MutableStateFlow<String?>(null)
     val activeConnectionId: StateFlow<String?> = _activeConnectionId.asStateFlow()
 
+    private val _debugLog = MutableStateFlow<List<String>>(emptyList())
+    val debugLog: StateFlow<List<String>> = _debugLog.asStateFlow()
+
+    fun log(msg: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+            .format(java.util.Date())
+        _debugLog.value = (_debugLog.value + "[$timestamp] $msg").takeLast(50)
+    }
+
     val activeConnection: Flow<OscConnection?> = combine(
         _connections, _activeConnectionId
     ) { conns, activeId ->
@@ -36,7 +45,8 @@ class OscConnectionManager {
             id = id,
             host = config.host,
             sendPort = config.sendPort,
-            receivePort = config.receivePort
+            receivePort = config.receivePort,
+            log = { msg -> log(msg) }
         )
         _connections.value = _connections.value + (id to connection)
         _activeConnectionId.value = id

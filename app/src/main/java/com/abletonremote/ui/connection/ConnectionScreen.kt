@@ -33,7 +33,7 @@ fun ConnectionScreen(viewModel: ConnectionViewModel) {
     val editingServer by viewModel.editingServer.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val discoveredServers by viewModel.discoveredServers.collectAsState()
-    val debugLog by viewModel.debugLog.collectAsState(initial = emptyList())
+    val debugLog by viewModel.debugLog.collectAsState()
 
     Scaffold(
         floatingActionButton = {
@@ -193,31 +193,38 @@ fun ConnectionScreen(viewModel: ConnectionViewModel) {
                 }
             }
 
-            // Debug log panel
-            if (debugLog.isNotEmpty()) {
-                item {
-                    Spacer(Modifier.height(16.dp))
-                    Text("Debug Log", style = MaterialTheme.typography.titleSmall,
-                        color = AbletonYellow)
-                }
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = AbletonDark),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(8.dp)) {
-                            for (line in debugLog) {
-                                Text(
-                                    line,
-                                    fontSize = 10.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = if ("ERROR" in line) AbletonRed
-                                        else if ("Received" in line || "REPLY" in line || "OSC:" in line) AbletonGreen
-                                        else AbletonTextSecondary,
-                                    modifier = Modifier.padding(vertical = 1.dp)
-                                )
-                            }
+            // Debug log panel — always visible
+            item {
+                Spacer(Modifier.height(16.dp))
+                Text("Debug Log", style = MaterialTheme.typography.titleSmall,
+                    color = AbletonYellow)
+            }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
+                    colors = CardDefaults.cardColors(containerColor = AbletonDark),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        if (debugLog.isEmpty()) {
+                            Text(
+                                "Connect to a server to see logs...",
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = AbletonTextSecondary
+                            )
+                        }
+                        for (line in debugLog) {
+                            Text(
+                                line,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = if ("ERROR" in line) AbletonRed
+                                    else if ("Recv" in line || "OSC:" in line) AbletonGreen
+                                    else if ("CONNECTED" in line) AbletonGreen
+                                    else AbletonTextSecondary,
+                                modifier = Modifier.padding(vertical = 1.dp)
+                            )
                         }
                     }
                 }
