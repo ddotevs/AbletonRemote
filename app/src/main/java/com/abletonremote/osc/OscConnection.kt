@@ -2,10 +2,8 @@ package com.abletonremote.osc
 
 import com.abletonremote.data.model.ConnectionState
 import com.illposed.osc.OSCMessage
-import com.illposed.osc.OSCParser
 import com.illposed.osc.OSCSerializerAndParserBuilder
 import com.illposed.osc.argument.handler.*
-import com.illposed.osc.transport.OSCPortOut
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.net.DatagramPacket
@@ -21,8 +19,8 @@ class OscConnection(
     val receivePort: Int = 11001,
     private val log: (String) -> Unit = {}
 ) {
-    private var portOut: OSCPortOut? = null
-    private var receiveSocket: DatagramSocket? = null
+    private var socket: DatagramSocket? = null
+    private var remoteAddress: InetAddress? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var receiveJob: Job? = null
 
@@ -37,12 +35,13 @@ class OscConnection(
     private val listeners = mutableSetOf<String>()
     private var heartbeatJob: Job? = null
 
+    private val builder = createAndroidSafeBuilder()
+
     companion object {
         fun createAndroidSafeBuilder(): OSCSerializerAndParserBuilder {
             val builder = OSCSerializerAndParserBuilder()
             builder.setUsingDefaultHandlers(false)
-
-            val safeHandlers = listOf(
+            listOf(
                 BlobArgumentHandler.INSTANCE,
                 BooleanFalseArgumentHandler.INSTANCE,
                 BooleanTrueArgumentHandler.INSTANCE,
@@ -59,10 +58,7 @@ class OscConnection(
                 UnsignedIntegerArgumentHandler.INSTANCE,
                 StringArgumentHandler(),
                 SymbolArgumentHandler()
-            )
-            for (handler in safeHandlers) {
-                builder.registerArgumentHandler(handler)
-            }
+            ).forEach { builder.registerArgumentHandler(it) }
             return builder
         }
     }
@@ -73,27 +69,20 @@ class OscConnection(
                 _connectionState.value = ConnectionState.CONNECTING
                 log("Connecting to $host:$sendPort ...")
 
-                val builder = createAndroidSafeBuilder()
-                log("Builder OK")
+                remoteAddress = InetAddress.getByName(host)
+                log("Resolved: ${remoteAddress!!.hostAddress}")
 
-                val remote = InetSocketAddress(InetAddress.getByName(host), sendPort)
-                log("Resolved: ${remote.address.hostAddress}:$sendPort")
-
-                val local = InetSocketAddress(InetAddress.getByName("0.0.0.0"), receivePort)
-                portOut = OSCPortOut(builder, remote, local)
-                log("OSCPortOut bound to local:$receivePort -> remote:$sendPort")
-
-                receiveSocket = DatagramSocket(null)
-                receiveSocket!!.reuseAddress = true
-                receiveSocket!!.bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), receivePort))
-                log("Receive socket bound to :$receivePort")
+                // Single socket: bind to receivePort, use for both send and receive
+                socket = DatagramSocket(null)
+                socket!!.reuseAddress = true
+                socket!!.bind(InetSocketAddress("0.0.0.0", receivePort))
+                log("Socket bound to :$receivePort")
 
                 val parser = builder.buildParser()
                 startReceiveLoop(parser)
                 log("Receive loop started")
 
-                val testMsg = OSCMessage("/live/test")
-                portOut!!.send(testMsg)
+                sendOsc("/live/test")
                 log("Sent /live/test")
 
                 _connectionState.value = ConnectionState.CONNECTED
@@ -107,14 +96,29 @@ class OscConnection(
         }
     }
 
-    private fun startReceiveLoop(parser: OSCParser) {
+    private fun sendOsc(address: String, vararg args: Any) {
+        try {
+            val msg = OSCMessage(address, args.toList())
+            val outBuf = ByteBuffer.allocate(4096)
+            val receiver = com.illposed.osc.BufferBytesReceiver(outBuf)
+            val serializer = builder.buildSerializer(receiver)
+            serializer.write(msg)
+            val bytes = receiver.toByteArray()
+            val pkt = DatagramPacket(bytes, bytes.size, remoteAddress, sendPort)
+            socket?.send(pkt)
+        } catch (e: Exception) {
+            log("Send err ($address): ${e.javaClass.simpleName}: ${e.message}")
+        }
+    }
+
+    private fun startReceiveLoop(parser: com.illposed.osc.OSCParser) {
         receiveJob = scope.launch {
             val buf = ByteArray(4096)
             log("Listening for packets...")
             while (isActive) {
                 try {
                     val pkt = DatagramPacket(buf, buf.size)
-                    receiveSocket?.receive(pkt) ?: break
+                    socket?.receive(pkt) ?: break
                     log("Recv ${pkt.length}B from ${pkt.address}:${pkt.port}")
                     val data = ByteBuffer.wrap(buf, 0, pkt.length)
                     val oscPacket = parser.convert(data)
@@ -136,23 +140,15 @@ class OscConnection(
         heartbeatJob?.cancel()
         receiveJob?.cancel()
         listeners.clear()
-        try { receiveSocket?.close() } catch (_: Exception) {}
-        try { portOut?.close() } catch (_: Exception) {}
-        receiveSocket = null
-        portOut = null
+        try { socket?.close() } catch (_: Exception) {}
+        socket = null
+        remoteAddress = null
         _connectionState.value = ConnectionState.DISCONNECTED
         log("Disconnected")
     }
 
     fun send(address: String, vararg args: Any) {
-        scope.launch {
-            try {
-                val msg = OSCMessage(address, args.toList())
-                portOut?.send(msg)
-            } catch (e: Exception) {
-                log("Send err ($address): ${e.javaClass.simpleName}: ${e.message}")
-            }
-        }
+        scope.launch { sendOsc(address, *args) }
     }
 
     fun messagesAt(address: String): Flow<List<Any>> {
@@ -187,8 +183,7 @@ class OscConnection(
             while (isActive) {
                 delay(5000)
                 try {
-                    val msg = OSCMessage("/live/test")
-                    portOut?.send(msg)
+                    sendOsc("/live/test")
                 } catch (_: Exception) {
                     _connectionState.value = ConnectionState.ERROR
                 }
